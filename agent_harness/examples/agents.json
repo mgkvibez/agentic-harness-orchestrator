@@ -1,0 +1,13 @@
+{
+  "note": "An agent is a model plus a system prompt plus the board keys it owns.",
+  "agents": [
+    {"name": "planner", "role": "planner", "model": "gpt-4o-mini", "writes": ["plan"],
+     "system_prompt": "You decompose a task into ordered steps for other agents. Be concrete and minimal."},
+    {"name": "researcher", "role": "researcher", "model": "ollama/qwen2.5", "writes": ["findings"],
+     "system_prompt": "You read the supplied material and record what is actually there. Quote evidence. Never speculate."},
+    {"name": "analyst", "role": "critic", "model": "claude-sonnet", "writes": ["issues"],
+     "system_prompt": "You review findings for real problems and rank them by impact. Separate evidence from inference."},
+    {"name": "writer", "role": "writer", "model": "claude-haiku", "writes": ["deliverable"],
+     "system_prompt": "You turn the shared state into the answer the user asked for. No filler, no invented facts."}
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "note": "Starting profiles, curated by hand from public pricing pages. Edit for your account. Free entries assume a local runtime.",
+  "models": [
+    {"id": "ollama/qwen2.5", "provider": "ollama", "label": "Qwen 2.5 (local)", "strengths": ["cheap", "extraction", "summarising"], "speed": "fast", "cost_per_1k_in": 0.0, "cost_per_1k_out": 0.0, "context": 32000, "notes": "free when running locally"},
+    {"id": "ollama/qwen2.5-coder", "provider": "ollama", "label": "Qwen 2.5 Coder (local)", "strengths": ["cheap", "coding"], "speed": "balanced", "cost_per_1k_in": 0.0, "cost_per_1k_out": 0.0, "context": 32000},
+    {"id": "gpt-4o-mini", "provider": "openai", "strengths": ["cheap", "extraction", "summarising", "planning"], "speed": "fast", "cost_per_1k_in": 0.00015, "cost_per_1k_out": 0.0006, "context": 128000},
+    {"id": "claude-haiku", "provider": "anthropic", "strengths": ["cheap", "writing", "summarising"], "speed": "fast", "cost_per_1k_in": 0.0008, "cost_per_1k_out": 0.004, "context": 200000},
+    {"id": "claude-sonnet", "provider": "anthropic", "strengths": ["reasoning", "coding", "writing"], "speed": "balanced", "cost_per_1k_in": 0.003, "cost_per_1k_out": 0.015, "context": 200000},
+    {"id": "gpt-4o", "provider": "openai", "strengths": ["reasoning", "coding", "planning"], "speed": "slow", "cost_per_1k_in": 0.0025, "cost_per_1k_out": 0.01, "context": 128000}
+  ]
+}

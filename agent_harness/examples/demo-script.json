@@ -1,0 +1,16 @@
+{
+  "note": "Scripted replies so `aharness demo` runs offline with no keys. Every trace line from a demo run says provider: fake.",
+  "script": [
+    {"contains": "Decide the route",
+     "text": "{\"route\": \"decompose\", \"reason\": \"reading, judging and writing are different jobs\"}"},
+    {"contains": "Produce the plan",
+     "text": "{\"rationale\": \"read, analyse, write\", \"steps\": [{\"id\": \"s1\", \"agent\": \"researcher\", \"instruction\": \"Record what the supplied sample actually contains.\", \"writes\": [\"findings\"]}, {\"id\": \"s2\", \"agent\": \"analyst\", \"instruction\": \"Judge the findings and rank real problems.\", \"reads\": [\"findings\"], \"writes\": [\"issues\"]}, {\"id\": \"s3\", \"agent\": \"writer\", \"instruction\": \"Write the security summary.\", \"reads\": [\"issues\"], \"writes\": [\"deliverable\"]}]}"},
+    {"contains": "Record what the supplied sample",
+     "text": "{\"files_reviewed\": 3, \"observations\": [\"deploy.sh runs curl piped into bash\", \"compose.yaml mounts the docker socket\", \"sshd_config sets PermitRootLogin yes\"]}"},
+    {"contains": "Judge the findings",
+     "text": "{\"issues\": [{\"severity\": \"high\", \"title\": \"Remote script piped into a shell\", \"evidence\": \"deploy.sh:2\"}, {\"severity\": \"high\", \"title\": \"Docker socket mounted into a container\", \"evidence\": \"compose.yaml:9\"}, {\"severity\": \"medium\", \"title\": \"Root SSH login permitted\", \"evidence\": \"sshd_config:4\"}], \"ranked_by\": \"impact\"}"},
+    {"contains": "Write the security summary",
+     "text": "# Security review\n\nThree problems, two of them high: a `curl | bash` in deploy.sh, the docker socket mounted in compose.yaml, and root SSH login enabled. Fix the first two before the next deploy.\n"}
+  ],
+  "fallback": "I could not produce a usable answer for that step."
+}

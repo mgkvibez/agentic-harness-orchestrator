@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentharness"
+version = "0.1.0"
+description = "Route sub-tasks to the right model instead of the biggest one: a from-scratch orchestrator with a blackboard, strict JSON contracts and an auditable execution trace."
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+authors = [{name = "mgkvibez"}]
+keywords = ["agents", "orchestrator", "routing", "llm", "blackboard", "harness"]
+dependencies = []
+
+[project.optional-dependencies]
+litellm = ["litellm>=1.40"]
+dev = ["pytest>=8", "build>=1"]
+
+[project.scripts]
+aharness = "agent_harness.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["agent_harness*"]
+[tool.setuptools.package-data]
+agent_harness = ["examples/*.json"]
