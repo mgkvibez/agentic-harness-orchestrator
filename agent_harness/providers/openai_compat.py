@@ -9,12 +9,15 @@ network, which is otherwise the least-tested code in any client.
 from __future__ import annotations
 
 import json
+import socket
 import time
 import urllib.error
 import urllib.request
 from typing import Any, Callable, Dict, Optional, Sequence
 
-from ..errors import ProviderError
+from ..errors import (ProviderAuthError, ProviderBadResponse, ProviderError,
+                      ProviderInvalidRequest, ProviderModelNotFound, ProviderRateLimit,
+                      ProviderTimeout, ProviderUnavailable)
 from .base import Completion, Message, estimate_tokens
 
 Transport = Callable[[str, Dict[str, str], bytes, float], "tuple[int, Dict[str, Any]]"]
@@ -33,8 +36,30 @@ def urllib_transport(url: str, headers: Dict[str, str], body: bytes, timeout: fl
             return exc.code, json.loads(payload or "{}")
         except ValueError:
             return exc.code, {"error": {"message": payload[:500]}}
+    except socket.timeout as exc:
+        raise ProviderTimeout("{} timed out after {}s".format(url, timeout)) from exc
     except urllib.error.URLError as exc:
-        raise ProviderError("cannot reach {}: {}".format(url, exc.reason)) from exc
+        if isinstance(exc.reason, socket.timeout):
+            raise ProviderTimeout("{} timed out after {}s".format(url, timeout)) from exc
+        raise ProviderUnavailable("cannot reach {}: {}".format(url, exc.reason)) from exc
+
+
+def _error_for_status(status: int, message: str, model: str, base_url: str,
+                      attempts: int) -> ProviderError:
+    """One status code, one cause, one correct response."""
+    detail = "{} returned {} for {!r} after {} attempt(s): {}".format(
+        base_url, status, model, attempts, message)
+    if status in (401, 403):
+        return ProviderAuthError(detail)
+    if status == 404:
+        return ProviderModelNotFound(detail)
+    if status == 429:
+        return ProviderRateLimit(detail)
+    if status in (400, 408, 409, 422, 425):
+        return ProviderInvalidRequest(detail)
+    if 500 <= status < 600:
+        return ProviderUnavailable(detail)
+    return ProviderError(detail)
 
 
 class OpenAICompatibleProvider:
@@ -55,6 +80,11 @@ class OpenAICompatibleProvider:
         self.calls = 0
         self.retries_used = 0
 
+    @property
+    def attempt_ceiling(self) -> int:
+        """Worst-case attempts for one logical call, so the budget can reserve them."""
+        return self.retries + 1
+
     def complete(self, messages: Sequence[Message], model: str, temperature: float = 0.0,
                  max_tokens: int = 1024) -> Completion:
         body = json.dumps({"model": model,
@@ -68,7 +98,15 @@ class OpenAICompatibleProvider:
         attempt = 0
         while True:
             self.calls += 1
-            status, payload = self._transport(url, headers, body, self.timeout)
+            try:
+                status, payload = self._transport(url, headers, body, self.timeout)
+            except (ProviderTimeout, ProviderUnavailable):
+                if attempt < self.retries:
+                    attempt += 1
+                    self.retries_used += 1
+                    self._sleep(0.5 * (2 ** (attempt - 1)))
+                    continue
+                raise
             if status == 200:
                 return self._parse(payload, model, messages)
             message = self._error_message(payload)
@@ -77,8 +115,7 @@ class OpenAICompatibleProvider:
                 self.retries_used += 1
                 self._sleep(0.5 * (2 ** (attempt - 1)))
                 continue
-            raise ProviderError("{} returned {} for {!r}: {}".format(
-                self.base_url, status, model, message))
+            raise _error_for_status(status, message, model, self.base_url, attempt + 1)
 
     def _error_message(self, payload: Dict[str, Any]) -> str:
         error = payload.get("error") if isinstance(payload, dict) else None
@@ -91,7 +128,8 @@ class OpenAICompatibleProvider:
             choice = payload["choices"][0]
             text = choice["message"]["content"] or ""
         except (KeyError, IndexError, TypeError) as exc:
-            raise ProviderError("unexpected response shape for {!r}: {}".format(model, exc)) from exc
+            raise ProviderBadResponse(
+                "unexpected response shape for {!r}: {}".format(model, exc)) from exc
         usage = payload.get("usage") or {}
         return Completion(
             text=text, model=payload.get("model") or model,

@@ -1,4 +1,11 @@
-"""CLI. Exit codes are a contract: 0 ok, 2 usage/config, 3 contract, 4 budget, 5 dependency."""
+"""CLI. Exit codes are a contract and are documented in the README.
+
+0 ok, 2 usage or config, 3 contract violation, 4 budget refused, 5 missing optional
+dependency, 6 provider failure, 7 execution refused (permission, overwrite or
+unmet dependency). A provider failure used to be swallowed by the generic
+HarnessError handler and reported as a usage error, which is why it has its own
+code now.
+"""
 
 from __future__ import annotations
 
@@ -9,8 +16,10 @@ import sys
 from typing import List, Optional
 
 from . import SERVICE, __version__
+from .errors import ConfigError, MissingDependency      # needed by module-level helpers
 
 EXIT_OK, EXIT_USAGE, EXIT_CONTRACT, EXIT_BUDGET, EXIT_DEPENDENCY = 0, 2, 3, 4, 5
+EXIT_PROVIDER, EXIT_REFUSED = 6, 7
 
 
 def _example(name: str) -> str:
@@ -85,7 +94,7 @@ def _provider(args, offline_banner: bool = True):
             key_env = getattr(args, "api_key_env", "AHARNESS_API_KEY")
             api_key = os.environ.get(key_env, "")
             if not api_key:
-                raise MissingDependency("set {!r} in the environment; it is empty".format(key_env))
+                raise ConfigError("set {!r} in the environment; it is empty".format(key_env))
             print("provider: openai-compat {} (real model calls)".format(base_url), file=sys.stderr)
             return OpenAICompatibleProvider(base_url, api_key)
         from .providers.litellm_provider import LiteLLMProvider
@@ -101,12 +110,15 @@ def _provider(args, offline_banner: bool = True):
 def main(argv=None) -> int:
     from .blackboard import Blackboard
     from .config import Settings
-    from .errors import BudgetExceeded, ConfigError, ContractViolation, HarnessError, MissingDependency
+    from .errors import (BudgetExceeded, ConfigError, ContractViolation, DependencyError,
+                         HarnessError, MissingDependency, OverwriteRejected, PermissionDenied,
+                         ProviderError)
     from .orchestrator import Orchestrator
     from .trace import Trace
 
     parser = build_parser()
     args = parser.parse_args(argv)
+    orchestrator = None          # so failure handlers can still show the trace
     if args.cmd is None:
         parser.print_help()
         return EXIT_USAGE
@@ -177,6 +189,18 @@ def main(argv=None) -> int:
     except MissingDependency as exc:
         print("missing dependency: {}".format(exc), file=sys.stderr)
         return EXIT_DEPENDENCY
+    except ProviderError as exc:
+        print("provider failure ({}): {}".format(type(exc).__name__, exc), file=sys.stderr)
+        if orchestrator is not None and getattr(orchestrator, "trace", None) is not None:
+            print("\n=== evidence for the failed run ===", file=sys.stderr)
+            print(orchestrator.trace.summary(), file=sys.stderr)
+        return EXIT_PROVIDER
+    except (PermissionDenied, OverwriteRejected, DependencyError) as exc:
+        print("execution refused: {}".format(exc), file=sys.stderr)
+        if orchestrator is not None and getattr(orchestrator, "trace", None) is not None:
+            print("\n=== evidence for the refused run ===", file=sys.stderr)
+            print(orchestrator.trace.summary(), file=sys.stderr)
+        return EXIT_REFUSED
     except BudgetExceeded as exc:
         print("budget exceeded: {}".format(exc), file=sys.stderr)
         if exc.trace is not None:

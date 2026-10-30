@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.3.0 - 2026-10-30
+
+Phase 0: core reliability, governance and execution integrity. Remediation, not features.
+
+- Pre-call budget reservations covering triage, planning, steps, JSON repair, truncation
+  retries and provider retries. A zero budget refuses at the first call.
+- Unknown pricing is flagged and quoted conservatively instead of reading as free.
+  Estimated and actual cost are recorded separately.
+- Write authority derived from the roster and enforced by the blackboard: reserved system
+  keys protected, user inputs unable to overwrite system state after seeding, one agent
+  unable to replace another's artifact, every refusal audited as `write_rejected`.
+- Plan validation: invalid references rejected, cycles rejected by name, undeclared writes
+  rejected, and dependency-violating order repaired deterministically with the reordering
+  recorded. A step never executes with a missing required input.
+- Provider error taxonomy (auth, rate limit, unavailable, timeout, bad response, invalid
+  request, model not found), bounded retries that are budgeted before the call, enforced
+  timeouts, and transport failures made retryable.
+- Evidence: run ids, call ids, artifact sha256 hashes, attempts, validation outcomes,
+  terminal status, budget snapshots, and credential scrubbing.
+- Multi-output steps now produce distinct artifacts instead of one value copied to every
+  declared key.
+- CLI exit code 6 for provider failures (previously swallowed as a usage error) and 7 for
+  refused execution. Gate extended to assert both.
+
 ## v0.2.0 - 2026-10-30
 
 Live-tested against real models, and the real models found real bugs.

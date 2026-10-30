@@ -47,7 +47,7 @@ A reply that fails validation gets **one repair attempt** with the error fed bac
 
 Three ceilings, all enforced per step, all reported with the partial trace when they trip: `--max-steps` (default 8), `--max-cost` (default $0.25), and a wall clock (default 120s). `--max-cost 0` is a valid, useful setting meaning "do not spend", and it means that.
 
-Exit codes are a contract: `0` success, `2` usage or config error, `3` contract violation, `4` budget exceeded, `5` missing optional dependency.
+Exit codes are a contract: `0` success, `2` usage or config, `3` contract violation, `4` budget refused, `5` missing optional dependency, `6` provider failure, `7` execution refused. See the Phase 0 section below for what each guarantee means.
 
 ## Live run against real models (NVIDIA NIM)
 
@@ -94,13 +94,35 @@ Two honest observations from that run, both visible in the trace:
 - The planner ordered `analyst` before `researcher`, so the analyst ran with its declared input `findings` still absent. The harness records the missing key in the prompt and lets the step proceed. That is the wrong default for a plan that declares dependencies, and it is the next thing to fix.
 - Reasoning models can burn a 1500-token budget before producing a character, which is why the retry doubles to 4500 rather than nudging.
 
+## Phase 0 hardening (0.3.0)
+
+Phase 0 changed the guarantees, not the feature list. Every claim below is enforced in code and has a regression test behind it that runs offline.
+
+**Nothing is called before it is paid for.** Each provider call is quoted, reserved against the budget, and only then made. The quote covers the permitted retry allowance, so a call that may be attempted three times is funded three times before the first attempt. Triage, planning, steps, JSON repairs and truncation retries all pass through the same reservation path. A zero budget refuses at the first call rather than partway through a run, and the trace shows `status: budget_exceeded` with no spend.
+
+**Unknown pricing is never zero.** A model whose price is not modelled (credit-metered endpoints such as NVIDIA NIM, private deployments) is quoted at a configurable conservative rate (`AHARNESS_UNKNOWN_PRICING_PER_1K`, default $0.01 per 1k tokens) and every such call is flagged `conservative: true`. Estimated and actual cost are recorded as separate fields; the totals line reports both.
+
+**Authority comes from the roster, never from the plan.** An agent may write only the keys its roster entry declares. The keys `task` (and anything prefixed `_`) belong to the harness. A plan that tries to grant a step a key the agent does not declare is rejected as a contract violation, so a planner cannot escalate its agents. Every refused write is recorded as a `write_rejected` event naming the agent, key and reason. User inputs can seed the board before execution but cannot overwrite system state afterwards, and one agent cannot silently replace another agent's artifact.
+
+**Dependencies are proved, not assumed.** Before execution, every step's declared inputs must resolve to something supplied or produced by the plan. A reference nothing produces is rejected, a cycle is rejected with the cycle named, and a plan whose declared order violates its own dependencies is executed in a stable topological order with the reordering recorded in the trace rather than applied silently. At execution time a step with a missing input raises instead of running on partial context.
+
+**Provider failures have causes.** Timeouts, rate limits, auth failures, unprovisioned models, malformed responses and invalid requests are distinct exceptions with distinct handling. Retries are bounded, counted, and included in the budget quote. A truncated answer buys more room once instead of being reported as a contract violation. Transport failures are retryable; client errors are not, so a bad request cannot burn quota.
+
+**A failed run is still explainable.** Every event carries the run id and every provider call a call id. Artifacts are recorded with a sha256 of their content, so a delivered value can be proved to match the trace. Each call records tokens, estimated cost, actual cost, duration, attempts, finish reason and budget remaining. Rejections, fallbacks, truncation and validation outcomes are events, and `run_end` carries a terminal status. Strings are scrubbed of credential-shaped content before they are written, because the trace is a file people paste into reports.
+
+### Exit codes
+
+`0` success, `2` usage or config, `3` contract violation, `4` budget refused, `5` missing optional dependency, `6` provider failure, `7` execution refused (permission, overwrite or unmet dependency). A provider failure previously fell through to the generic handler and was reported as a usage error; it now has its own code and prints the evidence for the failed run.
+
 ## What this is not
 
 - **Live-tested on ten NVIDIA NIM models, not benchmarked.** Contract compliance was measured there; whether the routing choice is the best one remains unmeasured, and the harness does not claim otherwise. Routing quality is The routing decision is a model call with a JSON contract. Whether it picks the best agent is unmeasured, and the README does not claim otherwise.
 - **Not a tool-calling framework.** Agents read and write blackboard keys. No filesystem, no shell, no browsing.
 - **Not a team simulator.** No agent-to-agent debate or critique loops. The blueprint kept that for Phase 2, deliberately.
-- **No committed model calls in the suite.** 92 tests run against a scripted provider in under a second, so the suite proves the mechanics, not model quality. `--live` is the real path and needs the `[litellm]` extra and your own keys.
+- **No committed model calls in the suite.** 121 tests run against a scripted provider in under a second, so the suite proves the mechanics, not model quality. `--live` is the real path and needs the `[litellm]` extra and your own keys.
 - **Price table is a snapshot**, hand-entered from public pages. It will drift; edit `examples/models.json`.
+- **Estimates over-reserve.** A quote assumes the full output budget is used, so estimated cost runs well above actual (the demo shows $0.00204 actual against $0.02010 estimated). That is the safe direction, and it means a tight budget refuses earlier than strictly necessary.
+- **Execution is sequential.** Phase 0 deliberately introduced no parallelism; dependency ordering repairs behaviour rather than adding throughput.
 
 ## Layout
 

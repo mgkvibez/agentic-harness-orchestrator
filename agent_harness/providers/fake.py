@@ -32,6 +32,7 @@ Matcher = Callable[[Sequence[Message], str], Optional[str]]
 
 class FakeProvider:
     name = "fake"
+    attempt_ceiling = 1
 
     def __init__(self, script: Sequence[Union[ScriptedReply, Dict[str, str]]] = (), fallback: str = "ok"):
         self.script: List[ScriptedReply] = []

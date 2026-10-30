@@ -1,5 +1,5 @@
 {
-  "note": "Only models verified to answer on the key this was tested with. The /v1/models endpoint lists 85 ids, but 43 of the chat-capable ones return 404 'function not found for account', 4 hit end-of-life, and some answer with empty content at small token budgets. Strengths are inferred from model naming and observed behaviour, NOT from benchmarks. NIM is credit-metered rather than per-token, so prices are 0 and any trace built on these profiles reports $0.00: the token counts are real, the dollars are not meaningful. rank is a human priority for tie-breaks when prices are equal (lower wins).",
+  "note": "Only models verified to answer on the key this was tested with. The /v1/models endpoint lists 85 ids, but 43 of the chat-capable ones return 404 'function not found for account', 4 hit end-of-life, and some answer with empty content at small token budgets. Strengths are inferred from model naming and observed behaviour, NOT from benchmarks. NIM is credit-metered rather than per-token, so prices are 0 but pricing_known is false, so every call is quoted at the conservative fallback rate and clearly flagged as an estimate rather than reading as free. rank is a human priority for tie-breaks when prices are equal (lower wins).",
   "models": [
     {
       "id": "nvidia/nemotron-3.5-bolt-e4b",
@@ -11,7 +11,8 @@
       "speed": "fast",
       "context": 128000,
       "notes": "smallest that answered",
-      "rank": 1
+      "rank": 1,
+      "pricing_known": false
     },
     {
       "id": "nvidia/nemotron-3.5-lightning-30b-a3b",
@@ -23,7 +24,8 @@
       ],
       "speed": "fast",
       "context": 128000,
-      "rank": 2
+      "rank": 2,
+      "pricing_known": false
     },
     {
       "id": "openai/gpt-oss-20b",
@@ -35,7 +37,8 @@
       ],
       "speed": "fast",
       "context": 128000,
-      "rank": 3
+      "rank": 3,
+      "pricing_known": false
     },
     {
       "id": "minimaxai/minimax-m3.1-flash",
@@ -46,7 +49,8 @@
       ],
       "speed": "fast",
       "context": 128000,
-      "rank": 5
+      "rank": 5,
+      "pricing_known": false
     },
     {
       "id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
@@ -57,7 +61,8 @@
       ],
       "speed": "balanced",
       "context": 128000,
-      "rank": 4
+      "rank": 4,
+      "pricing_known": false
     },
     {
       "id": "meta/muse-glimmer-30b",
@@ -68,7 +73,8 @@
       ],
       "speed": "balanced",
       "context": 128000,
-      "rank": 6
+      "rank": 6,
+      "pricing_known": false
     },
     {
       "id": "poolside/laguna-xs-2.1",
@@ -78,7 +84,8 @@
       ],
       "speed": "balanced",
       "context": 128000,
-      "rank": 7
+      "rank": 7,
+      "pricing_known": false
     },
     {
       "id": "nvidia/ising-calibration-1.5-31b",
@@ -88,7 +95,8 @@
       ],
       "speed": "balanced",
       "context": 128000,
-      "rank": 8
+      "rank": 8,
+      "pricing_known": false
     },
     {
       "id": "mistralai/mistral-large-4-1t-a52b",
@@ -99,7 +107,8 @@
       ],
       "speed": "slow",
       "context": 128000,
-      "rank": 9
+      "rank": 9,
+      "pricing_known": false
     },
     {
       "id": "nvidia/nemotron-3-ultra-550b-a55b",
@@ -109,7 +118,8 @@
       ],
       "speed": "slow",
       "context": 128000,
-      "rank": 10
+      "rank": 10,
+      "pricing_known": false
     }
   ]
 }

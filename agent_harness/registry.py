@@ -28,6 +28,7 @@ class ModelProfile:
     cost_per_1k_out: float = 0.0
     context: int = 0
     rank: int = 0
+    pricing_known: bool = True
     notes: str = ""
 
     def __post_init__(self) -> None:
@@ -43,6 +44,18 @@ class ModelProfile:
     def cost(self, input_tokens: int, output_tokens: int) -> float:
         return round(input_tokens / 1000 * self.cost_per_1k_in
                      + output_tokens / 1000 * self.cost_per_1k_out, 6)
+
+    def estimate_cost(self, input_tokens: int, output_tokens: int,
+                      unknown_pricing_per_1k: float = 0.01) -> "tuple[float, bool]":
+        """Cost, and whether it came from a conservative fallback rate.
+
+        A model whose pricing is not modelled must not read as free: a zero
+        budget would then fail to block a call that may well be billable.
+        """
+        if self.pricing_known:
+            return self.cost(input_tokens, output_tokens), False
+        tokens = (input_tokens + output_tokens) / 1000
+        return round(tokens * unknown_pricing_per_1k, 6), True
 
     @property
     def is_free(self) -> bool:
@@ -68,6 +81,7 @@ def load_profiles(path: str) -> List[ModelProfile]:
             cost_per_1k_in=float(entry.get("cost_per_1k_in", 0.0)),
             cost_per_1k_out=float(entry.get("cost_per_1k_out", 0.0)),
             rank=int(entry.get("rank", 0)),
+            pricing_known=bool(entry.get("pricing_known", True)),
             context=int(entry.get("context", 0)), notes=entry.get("notes", "")))
     if not profiles:
         raise ConfigError("{}: registry is empty".format(path))

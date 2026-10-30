@@ -47,7 +47,12 @@ def load_roster(path: str, registry: Optional[ModelRegistry] = None) -> "Roster"
             name=entry["name"], role=entry.get("role", entry["name"]),
             model=entry["model"], system_prompt=entry["system_prompt"],
             writes=tuple(entry.get("writes", ())), notes=entry.get("notes", "")))
-    return Roster(agents, registry=registry)
+    roster = Roster(agents, registry=registry)
+    # Fail fast: a roster that claims a reserved system key is a config error, and
+    # it should surface when the config is read, not when a paid run begins.
+    from .permissions import WritePolicy
+    WritePolicy(roster)
+    return roster
 
 
 class Roster:

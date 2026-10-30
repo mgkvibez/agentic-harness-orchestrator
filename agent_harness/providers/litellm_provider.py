@@ -25,6 +25,11 @@ class LiteLLMProvider:
         self._api_keys = api_key_map or {}
         self._litellm = litellm
 
+    @property
+    def attempt_ceiling(self) -> int:
+        # litellm performs its own internal retries; quote for two attempts.
+        return 2
+
     def complete(self, messages: Sequence[Message], model: str, temperature: float = 0.0,
                  max_tokens: int = 1024) -> Completion:
         payload: Dict[str, Any] = {

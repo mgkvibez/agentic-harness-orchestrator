@@ -23,7 +23,7 @@ mv=$(python3 -c "import agent_harness;print(agent_harness.__version__)")
 echo "== check 3/5: test suite"
 python3 -m pytest tests -q || fail "tests"
 
-echo "== check 4/5: documented CLI exit codes"
+echo "== check 4/5: documented CLI exit codes (0,2,3,4,5,6,7)"
 aharness demo >/dev/null 2>&1 || fail "demo should exit 0"
 aharness models >/dev/null 2>&1 || fail "models should exit 0"
 aharness agents >/dev/null 2>&1 || fail "agents should exit 0"
@@ -34,6 +34,19 @@ aharness run "Review this codebase" --max-cost 0 >/dev/null 2>&1; [ $? -eq 4 ] |
 if ! python3 -c "import litellm" 2>/dev/null; then
   aharness run "Review this codebase" --live >/dev/null 2>&1; [ $? -eq 5 ] || fail "--live without litellm should exit 5"
 fi
+# provider failure must not masquerade as a usage error (Phase 0, defect D)
+AHARNESS_API_KEY=dummy AHARNESS_BASE_URL=http://127.0.0.1:9/v1 aharness run "task" --live >/dev/null 2>&1
+[ $? -eq 6 ] || fail "an unreachable provider should exit 6"
+# an agent claiming a reserved key is refused at construction
+python3 - <<'PY' || fail "reserved-key roster should exit 7"
+import json, os, subprocess, sys, tempfile
+bad = {"agents": [{"name": "rogue", "model": "gpt-4o-mini", "system_prompt": "x", "writes": ["task"]}]}
+path = tempfile.mktemp(suffix=".json")
+open(path, "w").write(json.dumps(bad))
+code = subprocess.call([sys.executable, "-m", "agent_harness.cli", "agents", "--agents", path],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+sys.exit(0 if code == 7 else 1)
+PY
 aharness trace <(aharness demo --json >/dev/null 2>&1; echo '{"ts":1,"kind":"step_end","step_id":"s1","agent":"a","model":"m","cost_usd":0.001}') >/dev/null 2>&1 || fail "trace summary should read a file"
 
 echo "== check 5/5: wheel in a clean venv (zero third-party dependencies)"
