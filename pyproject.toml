@@ -3,7 +3,7 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "agentharness"
+name = "agent-harness-orchestrator"
 version = "0.1.0"
 description = "Route sub-tasks to the right model instead of the biggest one: a from-scratch orchestrator with a blackboard, strict JSON contracts and an auditable execution trace."
 readme = "README.md"

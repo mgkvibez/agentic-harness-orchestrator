@@ -48,7 +48,7 @@ grep -q "behind the scenes" /tmp/aho-demo-wheel.out || fail "demo from the wheel
 python3 - <<'PY' || fail "the wheel pulled third-party dependencies"
 import json
 installed = {p["name"].lower() for p in json.load(open("/tmp/aho-piplist.json"))}
-allowed = {"agentharness", "pip", "setuptools", "wheel"}
+allowed = {"agent-harness-orchestrator", "pip", "setuptools", "wheel"}
 extra = installed - allowed
 assert not extra, "unexpected dependencies installed: {}".format(sorted(extra))
 print("zero third-party dependencies confirmed:", sorted(installed))

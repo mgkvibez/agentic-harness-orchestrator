@@ -7,13 +7,13 @@ Built as the code behind the *Agentic Harness Orchestrator* blueprint: a Python 
 ![aharness demo: routing each step to a different model, then showing the trace](docs/demo/harness.svg)
 
 ```bash
-pipx install agentharness
+pipx install agent-harness-orchestrator
 aharness demo          # offline playback, no keys, no spend
 aharness models        # what each model is good at and what it costs
 aharness run "Review this codebase for security flaws" --live    # real models
 ```
 
-Naming: the distribution is `agentharness`, the import is `agent_harness`, the command is `aharness`. `agent-harness`, `aharness` and `harness-orchestrator` were all taken on PyPI, so the distribution carries a name that was free.
+Naming: the distribution is `agent-harness-orchestrator`, the import is `agent_harness`, the command is `aharness`. `agent-harness`, `aharness`, `agentharness` and `harness-orchestrator` were either taken or rejected by PyPI as too close to an existing project, so the distribution carries the repository's own name. Nothing you type changes: install the distribution, run `aharness`.
 
 ## What the demo actually shows
 

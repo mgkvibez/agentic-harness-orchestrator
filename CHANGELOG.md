@@ -7,4 +7,5 @@
 - Three enforced ceilings: steps, cost, wall clock.
 - Provider protocol with a scripted offline provider and a lazy-litellm adapter.
 - Zero third-party runtime dependencies, verified by installing the wheel into a clean venv.
+- Published as `agent-harness-orchestrator` (PyPI rejected shorter variants as too similar to existing projects); the command remains `aharness`.
 - 77 tests, no network, no model calls.
