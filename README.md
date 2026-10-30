@@ -2,6 +2,10 @@
 
 **One task in, the right model per sub-task out, with the receipts.** A from-scratch orchestrator: triage decides whether a job needs one agent or several, a planner breaks it into steps, a blackboard carries the artifacts between agents, and every decision lands in an append-only trace with tokens and cost.
 
+[![PyPI](https://img.shields.io/pypi/v/agent-harness-orchestrator.svg)](https://pypi.org/project/agent-harness-orchestrator/)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![python](https://img.shields.io/badge/python-3.9%2B-blue.svg)](pyproject.toml)
+
 Built as the code behind the *Agentic Harness Orchestrator* blueprint: a Python while loop over a shared state dictionary, not a framework wrapper.
 
 ![aharness demo: routing each step to a different model, then showing the trace](docs/demo/harness.svg)
