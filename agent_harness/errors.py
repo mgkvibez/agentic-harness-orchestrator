@@ -67,6 +67,10 @@ class BudgetExceeded(HarnessError):
         self.quote = quote
 
 
+class ReservationError(HarnessError):
+    """A reservation was settled or released twice, or never existed."""
+
+
 class PermissionDenied(HarnessError):
     """An actor attempted a blackboard write it is not authorised to make."""
 

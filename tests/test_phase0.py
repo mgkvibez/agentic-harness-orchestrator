@@ -66,9 +66,14 @@ def test_zero_budget_blocks_the_very_first_call():
 
 # 2 ---------------------------------------------------------------------------
 def test_zero_budget_blocks_the_planning_call():
-    orchestrator = Orchestrator(REG_PAID, PAID_ROSTER, FakeProvider([TRIAGE_OK]), Settings())
+    orchestrator = Orchestrator(REG_PAID, PAID_ROSTER, FakeProvider([TRIAGE_OK]),
+                                Settings(max_cost_usd=0.05))
     board = orchestrator._begin("task", {})
-    orchestrator.budget.spent_usd = orchestrator.budget.limit_usd   # triage already spent it
+    # Exhaust the allowance the way a real run does: a settled reservation, not by
+    # reaching into budget state.
+    quote = orchestrator.budget.quote(PAID, 10, 10)
+    reservation = orchestrator.budget.reserve(quote, "triage")
+    orchestrator.budget.settle(reservation, orchestrator.budget.limit_usd)
     orchestrator.provider.calls.clear()
     with pytest.raises(BudgetExceeded):
         orchestrator._plan("task", board)

@@ -20,6 +20,11 @@ from .permissions import WritePolicy, is_reserved
 
 ACTOR_AGENT, ACTOR_SYSTEM, ACTOR_USER = "agent", "system", "user"
 
+# Sentinel that unlocks `replace()`. There is deliberately no boolean switch: a
+# correction is an explicit, named, audited act with a stated reason, not a flag
+# any caller can flip on a normal write.
+replace_authority = object()
+
 
 def artifact_hash(value: Any) -> str:
     """Stable sha256 of the stored value, so a trace can prove what was delivered."""
@@ -54,6 +59,7 @@ class Blackboard:
         self._versions: Dict[str, int] = {}
         self._history: Dict[str, List[Any]] = {}
         self._seeding = True          # only the harness may seed, and only first
+        self.replacements: List[Dict[str, Any]] = []   # audit log of forced corrections
 
     # -- seeding -------------------------------------------------------------
     def close_seeding(self) -> None:
@@ -66,7 +72,37 @@ class Blackboard:
 
     # -- writes --------------------------------------------------------------
     def write(self, key: str, value: Any, *, written_by: str = "", step_id: str = "",
-              actor: str = ACTOR_AGENT, allow_overwrite: bool = False) -> Entry:
+              actor: str = ACTOR_AGENT) -> Entry:
+        """The only write path an agent or the harness has. No override flag."""
+        return self._write(key, value, written_by=written_by, step_id=step_id, actor=actor,
+                           forced=False)
+
+    def replace(self, key: str, value: Any, *, authority, reason: str,
+                written_by: str = "harness", step_id: str = "") -> Entry:
+        """Harness-internal correction of an existing artifact.
+
+        Requires the module sentinel and a stated reason, and every use is
+        appended to `replacements` so the trace can show who overrode what and
+        why. This is an API boundary, not a defence against arbitrary Python in
+        the same process: nothing exported to agents can reach it.
+        """
+        if authority is not replace_authority:
+            raise PermissionDenied(
+                "replace() is reserved for harness-internal correction; it requires the "
+                "blackboard replace authority", key=key, reason="replace authority")
+        if not (reason or "").strip():
+            raise PermissionDenied(
+                "replace() requires a non-empty reason so the correction is auditable",
+                key=key, reason="missing reason")
+        entry = self._write(key, value, written_by=written_by, step_id=step_id,
+                            actor=ACTOR_SYSTEM, forced=True)
+        self.replacements.append({"key": key, "reason": reason.strip()[:200],
+                                  "written_by": written_by, "step_id": step_id,
+                                  "sha256": entry.sha256, "version": entry.version})
+        return entry
+
+    def _write(self, key: str, value: Any, *, written_by: str, step_id: str,
+               actor: str, forced: bool) -> Entry:
         if not key or not isinstance(key, str):
             raise HarnessError("blackboard keys must be non-empty strings")
         if actor not in (ACTOR_AGENT, ACTOR_SYSTEM, ACTOR_USER):
@@ -93,14 +129,14 @@ class Blackboard:
         # 2. no silent replacement of another actor's artifact. Enforcement is
         #    active whenever a policy is attached, which is every orchestrated
         #    run; a bare board stays a plain container for library use.
-        if key in self._values and not allow_overwrite and self.policy is not None:
+        if key in self._values and not forced and self.policy is not None:
             owner, owner_actor = self._owners.get(key, ""), self._entries_actor(key)
             same_actor = (actor == ACTOR_AGENT and owner_actor == ACTOR_AGENT and owner == written_by)
             shared = actor in (ACTOR_SYSTEM,) and self._seeding
             if not same_actor and not shared:
                 raise OverwriteRejected(
-                    "key {!r} already holds an artifact from {!r} ({}); {!r} may not replace it "
-                    "without allow_overwrite".format(key, owner or "unknown", owner_actor or "?",
+                    "key {!r} already holds an artifact from {!r} ({}); {!r} may not replace it; "
+                    "use the audited replace() path".format(key, owner or "unknown", owner_actor or "?",
                                                      written_by or actor),
                     key=key, owner=owner, actor=written_by or actor)
 

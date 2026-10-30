@@ -110,6 +110,26 @@ Phase 0 changed the guarantees, not the feature list. Every claim below is enfor
 
 **A failed run is still explainable.** Every event carries the run id and every provider call a call id. Artifacts are recorded with a sha256 of their content, so a delivered value can be proved to match the trace. Each call records tokens, estimated cost, actual cost, duration, attempts, finish reason and budget remaining. Rejections, fallbacks, truncation and validation outcomes are events, and `run_end` carries a terminal status. Strings are scrubbed of credential-shaped content before they are written, because the trace is a file people paste into reports.
 
+### Phase 0.1: independent audit remediation (0.3.1)
+
+An independent review of Phase 0 found eight defects. All eight were reproduced against `6eeeb7b` before any change, then fixed.
+
+**The budget is thread-safe.** Reservation, settlement and release all mutate under one lock, so check-and-insert is atomic: 200 threads racing a limit that affords 20 reservations accept exactly 20, across fifty rounds. A duplicate settlement is refused with a typed `ReservationError` rather than silently double-charging, and reservations left open at the end of a run are claimed as uncertain rather than dropped.
+
+**Cost now has four categories, never three.** Confirmed spend, estimated cost, uncertain cost and outstanding reservations are reported separately. A request that may have been received and billed but whose usage we cannot read (timeout, unusable response, malformed usage) moves its quote into `uncertain_usd`, which consumes budget headroom exactly like real spend and is never described as free or as confirmed. A rejected request (401, 404, 400) releases its reservation and is recorded as `not_billed`.
+
+**Settling more than was reserved is an event, not a surprise.** An actual charge above its quote produces `budget_overrun` with the amount, and a charge that takes confirmed plus uncertain spend past the limit exhausts the budget: every later call is refused with the reason.
+
+**Malformed usage is typed, not coerced.** A negative count, a boolean, a string or a NaN cannot be costed, so it raises `ProviderBadResponse`. Absent usage is estimated and flagged `usage_reported: false`, which is a different thing from usage that is present and wrong. A non-JSON body returned with HTTP 200 is also a `ProviderBadResponse`, carrying a truncated snippet and no credentials.
+
+**Invalid plans are rejected before any step spends.** Two steps writing the same key, a step declaring the same output twice, and a step reading what it writes are all contract violations at validation time. The earlier behaviour spent four provider calls and then died at runtime on an overwrite.
+
+**The overwrite bypass is gone.** `write()` no longer takes `allow_overwrite`; a correction goes through `replace()`, which requires a module-internal authority sentinel and a non-empty reason and appends an audit record with the new hash. This is an API boundary, not a sandbox against arbitrary Python in the same process.
+
+**Retry attribution is per call.** Counters on a provider are locked process-wide totals for reporting only; the attempt count a trace records comes attached to the `Completion` for that specific call, so two orchestrators sharing one provider cannot corrupt each other's numbers.
+
+**Every run ends with a terminal event.** That includes unexpected exceptions, which previously escaped without a `run_end`, leaving a run nobody could audit. Open reservations are claimed at that point, so the accounting still balances.
+
 ### Exit codes
 
 `0` success, `2` usage or config, `3` contract violation, `4` budget refused, `5` missing optional dependency, `6` provider failure, `7` execution refused (permission, overwrite or unmet dependency). A provider failure previously fell through to the generic handler and was reported as a usage error; it now has its own code and prints the evidence for the failed run.
@@ -119,7 +139,7 @@ Phase 0 changed the guarantees, not the feature list. Every claim below is enfor
 - **Live-tested on ten NVIDIA NIM models, not benchmarked.** Contract compliance was measured there; whether the routing choice is the best one remains unmeasured, and the harness does not claim otherwise. Routing quality is The routing decision is a model call with a JSON contract. Whether it picks the best agent is unmeasured, and the README does not claim otherwise.
 - **Not a tool-calling framework.** Agents read and write blackboard keys. No filesystem, no shell, no browsing.
 - **Not a team simulator.** No agent-to-agent debate or critique loops. The blueprint kept that for Phase 2, deliberately.
-- **No committed model calls in the suite.** 121 tests run against a scripted provider in under a second, so the suite proves the mechanics, not model quality. `--live` is the real path and needs the `[litellm]` extra and your own keys.
+- **No committed model calls in the suite.** 148 tests run against a scripted provider in under a second, so the suite proves the mechanics, not model quality. `--live` is the real path and needs the `[litellm]` extra and your own keys.
 - **Price table is a snapshot**, hand-entered from public pages. It will drift; edit `examples/models.json`.
 - **Estimates over-reserve.** A quote assumes the full output budget is used, so estimated cost runs well above actual (the demo shows $0.00204 actual against $0.02010 estimated). That is the safe direction, and it means a tight budget refuses earlier than strictly necessary.
 - **Execution is sequential.** Phase 0 deliberately introduced no parallelism; dependency ordering repairs behaviour rather than adding throughput.

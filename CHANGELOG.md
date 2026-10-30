@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.3.1 - 2026-10-30
+
+Phase 0.1: independent audit remediation. Eight findings, all reproduced first.
+
+- Budget is thread-safe: atomic reserve/settle/release under one lock, typed
+  `ReservationError` for duplicate or unknown operations, and open reservations claimed as
+  uncertain at the end of a run.
+- Cost is reported in four categories (confirmed, estimated, uncertain, outstanding).
+  A call that may have been billed without usable usage is never released as free; a
+  request rejected before doing work is recorded as not billed.
+- Settlement overrun is detected and emitted as `budget_overrun`; exceeding the limit
+  exhausts the budget and refuses every later call.
+- Malformed usage (negative, boolean, string, NaN) raises `ProviderBadResponse`; absent
+  usage is estimated and flagged. Non-JSON bodies with HTTP 200 raise `ProviderBadResponse`
+  with a truncated, credential-free snippet.
+- Plan validation rejects duplicate producers, duplicate declarations in one step, and
+  self-dependencies, so an invalid plan costs no step calls.
+- The `allow_overwrite` bypass is removed; corrections go through an authority-gated,
+  reason-carrying, audited `replace()`.
+- Retry counts are attached to each call rather than read from shared mutable state.
+- Every run, including one that dies on an unexpected exception, ends with `run_end`.
+
 ## v0.3.0 - 2026-10-30
 
 Phase 0: core reliability, governance and execution integrity. Remediation, not features.

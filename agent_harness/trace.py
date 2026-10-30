@@ -120,6 +120,14 @@ class Trace:
                          tokens["input"], tokens["output"], self.total_cost(),
                          self.estimated_cost(), len(self.of_kind("step_end")),
                          len(self.artifacts())))
+        end = self.of_kind("run_end")
+        if end:
+            f = end[-1].fields
+            lines.append("accounting: ${:.5f} confirmed, ${:.5f} uncertain, "
+                         "${:.5f} outstanding, status {}".format(
+                             float(f.get("cost_usd", 0.0)), float(f.get("uncertain_usd", 0.0)),
+                             float((f.get("budget") or {}).get("reserved_usd", 0.0)),
+                             f.get("status", "?")))
         return "\n".join(lines)
 
     def to_jsonl(self, path: str) -> None:

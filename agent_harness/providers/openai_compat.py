@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import socket
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -18,7 +19,7 @@ from typing import Any, Callable, Dict, Optional, Sequence
 from ..errors import (ProviderAuthError, ProviderBadResponse, ProviderError,
                       ProviderInvalidRequest, ProviderModelNotFound, ProviderRateLimit,
                       ProviderTimeout, ProviderUnavailable)
-from .base import Completion, Message, estimate_tokens
+from .base import Completion, Message, coerce_usage, estimate_tokens
 
 Transport = Callable[[str, Dict[str, str], bytes, float], "tuple[int, Dict[str, Any]]"]
 
@@ -29,7 +30,19 @@ def urllib_transport(url: str, headers: Dict[str, str], body: bytes, timeout: fl
     request = urllib.request.Request(url, data=body, headers=headers, method="POST")
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
-            return response.status, json.loads(response.read().decode() or "{}")
+            body = response.read().decode("utf-8", "replace")
+            try:
+                payload = json.loads(body or "{}")
+            except ValueError as exc:
+                # A 200 that is not JSON is a provider fault, not a crash. Keep a
+                # short snippet for diagnosis; never echo headers or credentials.
+                raise ProviderBadResponse(
+                    "response was not JSON (HTTP {}): {} | first bytes: {!r}".format(
+                        response.status, exc, body[:120])) from exc
+            if not isinstance(payload, dict):
+                raise ProviderBadResponse(
+                    "response was a JSON {} rather than an object".format(type(payload).__name__))
+            return response.status, payload
     except urllib.error.HTTPError as exc:
         payload = exc.read().decode("utf-8", "replace")
         try:
@@ -77,6 +90,10 @@ class OpenAICompatibleProvider:
         self.retries = retries
         self._sleep = sleep
         self._transport = transport or urllib_transport
+        # Counters are process-wide totals for reporting. Attribution per call is
+        # carried on the Completion, so two orchestrators sharing one provider
+        # cannot corrupt each other's attempt counts.
+        self._lock = threading.Lock()
         self.calls = 0
         self.retries_used = 0
 
@@ -97,22 +114,25 @@ class OpenAICompatibleProvider:
         url = self.base_url + "/chat/completions"
         attempt = 0
         while True:
-            self.calls += 1
+            with self._lock:
+                self.calls += 1
             try:
                 status, payload = self._transport(url, headers, body, self.timeout)
             except (ProviderTimeout, ProviderUnavailable):
                 if attempt < self.retries:
                     attempt += 1
-                    self.retries_used += 1
+                    with self._lock:
+                        self.retries_used += 1
                     self._sleep(0.5 * (2 ** (attempt - 1)))
                     continue
                 raise
             if status == 200:
-                return self._parse(payload, model, messages)
+                return self._parse(payload, model, messages, attempt + 1)
             message = self._error_message(payload)
             if status in RETRY_STATUSES and attempt < self.retries:
                 attempt += 1
-                self.retries_used += 1
+                with self._lock:
+                    self.retries_used += 1
                 self._sleep(0.5 * (2 ** (attempt - 1)))
                 continue
             raise _error_for_status(status, message, model, self.base_url, attempt + 1)
@@ -123,17 +143,19 @@ class OpenAICompatibleProvider:
             return str(error.get("message") or error)[:300]
         return str(payload)[:300]
 
-    def _parse(self, payload: Dict[str, Any], model: str, messages: Sequence[Message]) -> Completion:
+    def _parse(self, payload: Dict[str, Any], model: str, messages: Sequence[Message],
+               attempts: int = 1) -> Completion:
         try:
             choice = payload["choices"][0]
             text = choice["message"]["content"] or ""
         except (KeyError, IndexError, TypeError) as exc:
             raise ProviderBadResponse(
                 "unexpected response shape for {!r}: {}".format(model, exc)) from exc
-        usage = payload.get("usage") or {}
+        input_tokens, output_tokens, reported = coerce_usage(
+            payload.get("usage"), text, messages)
         return Completion(
             text=text, model=payload.get("model") or model,
-            input_tokens=int(usage.get("prompt_tokens") or estimate_tokens("".join(m.content for m in messages))),
-            output_tokens=int(usage.get("completion_tokens") or estimate_tokens(text)),
+            input_tokens=input_tokens, output_tokens=output_tokens,
             finish_reason=choice.get("finish_reason", "stop"),
-            raw={"provider": self.name, "usage_reported": bool(usage)})
+            raw={"provider": self.name, "usage_reported": reported,
+                 "attempts": attempts, "retries": attempts - 1})

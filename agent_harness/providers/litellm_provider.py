@@ -8,7 +8,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional, Sequence
 
-from ..errors import MissingDependency, ProviderError
+from ..errors import MissingDependency, ProviderBadResponse, ProviderError
+from .base import coerce_usage
 from .base import Completion, Message, estimate_tokens
 
 
@@ -49,9 +50,12 @@ class LiteLLMProvider:
             usage = response.get("usage") or {}
             finish = response["choices"][0].get("finish_reason", "stop")
         except (KeyError, IndexError, TypeError) as exc:
-            raise ProviderError("litellm returned an unexpected shape: {}".format(exc)) from exc
+            raise ProviderBadResponse(
+                "litellm returned an unexpected shape: {}".format(exc)) from exc
+        input_tokens, output_tokens, reported = coerce_usage(
+            usage if isinstance(usage, dict) else None, text, messages)
         return Completion(
-            text=text, model=model,
-            input_tokens=int(usage.get("prompt_tokens") or estimate_tokens("".join(m.content for m in messages))),
-            output_tokens=int(usage.get("completion_tokens") or estimate_tokens(text)),
-            finish_reason=finish)
+            text=text, model=model, input_tokens=input_tokens, output_tokens=output_tokens,
+            finish_reason=finish,
+            raw={"provider": self.name, "usage_reported": reported, "attempts": 1,
+                 "retries": 0})

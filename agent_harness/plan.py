@@ -171,14 +171,25 @@ def validate_plan(plan: Plan, roster: Roster, preseeded: Iterable[str],
                         "step {!r}: {}. A plan cannot grant authority the roster does not."
                         .format(step.id, exc)) from None
 
-    # 2. every read must resolve to something already supplied or produced.
+    # 2. one artifact, one producer. A plan that has two steps writing the same
+    #    key would spend money on a step whose output can only be overwritten or
+    #    rejected at runtime, so it is refused here, before any spending.
     produced_by: Dict[str, str] = {}
     for step in plan.steps:
+        if len(set(step.writes)) != len(step.writes):
+            raise ContractViolation(
+                "step {!r} declares the same output twice: {}".format(step.id, list(step.writes)))
         for key in step.writes:
-            if key in produced_by and produced_by[key] != step.id:
-                notes.append("key {!r} is written by both {!r} and {!r}".format(
-                    key, produced_by[key], step.id))
-            produced_by.setdefault(key, step.id)
+            if key in produced_by:
+                raise ContractViolation(
+                    "key {!r} has two producers: {!r} and {!r}. An artifact must have exactly "
+                    "one owner.".format(key, produced_by[key], step.id))
+            produced_by[key] = step.id
+        for key in step.reads:
+            if key in step.writes:
+                raise ContractViolation(
+                    "step {!r} reads {!r} and also writes it: a step cannot depend on its own "
+                    "output".format(step.id, key))
     for step in plan.steps:
         for key in step.reads:
             if key in available or key in produced_by:

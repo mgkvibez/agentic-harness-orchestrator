@@ -5,5 +5,5 @@ The design is a while loop over a blackboard, on purpose. Every decision point
 trusted, and every step lands in an append-only trace you can read afterwards.
 """
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 SERVICE = "agent-harness"

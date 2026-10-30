@@ -15,10 +15,11 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
 
 from .blackboard import ACTOR_SYSTEM, ACTOR_USER, Blackboard
-from .budget import Budget
+from .budget import CONFIRMED, UNCERTAIN, Budget, Settlement
 from .config import Settings
 from .errors import (BudgetExceeded, ConfigError, ContractViolation, DependencyError,
-                     HarnessError, OverwriteRejected, PermissionDenied, ProviderError)
+                     HarnessError, OverwriteRejected, PermissionDenied, ProviderBadResponse,
+                     ProviderError, ProviderUnavailable)
 from .permissions import WritePolicy
 from .plan import (Plan, Step, TriageDecision, ValidatedPlan, extract_json, parse_plan,
                    parse_triage, validate_plan)
@@ -93,6 +94,7 @@ class Orchestrator:
                              unknown_pricing_per_1k=self.settings.unknown_pricing_per_1k)
         self._started = 0.0
         self.board: Optional[Blackboard] = None
+        self._exhausted_recorded = False
 
     # -- helpers -------------------------------------------------------------
     def _cheap_model(self) -> str:
@@ -130,15 +132,25 @@ class Orchestrator:
         call_id = uuid.uuid4().hex[:10]
         messages = [Message("system", system), Message("user", prompt)]
         started = self.clock()
-        retries_before = int(getattr(self.provider, "retries_used", 0) or 0)
         try:
             completion = self.provider.complete(messages, model=model, max_tokens=budget_tokens)
-        except HarnessError:
-            # The call was reserved but produced nothing billable we can measure.
+        except (ProviderBadResponse, ProviderUnavailable) as exc:
+            # The request may have been received and billed even though we cannot
+            # read a result. Count the quote as uncertain rather than free.
+            self._close_uncertain(reservation, quote, step_id, agent_name, model, phase,
+                                  call_id, type(exc).__name__, str(exc))
+            raise
+        except ProviderError as exc:
+            # Rejected before any work: a 401/404/400 is not billed.
             self.budget.release(reservation)
             self.trace.record("provider_call_failed", step_id=step_id, agent=agent_name,
                               model=model, phase=phase, call_id=call_id,
-                              quote_usd=quote.usd, conservative=quote.conservative)
+                              quote_usd=quote.usd, conservative=quote.conservative,
+                              billing="not_billed", error=type(exc).__name__)
+            raise
+        except BaseException:
+            # An unexpected exception must not leave the reservation open.
+            self.budget.settle_uncertain(reservation, "unexpected failure during the call")
             raise
         duration_ms = int((self.clock() - started) * 1000)
         if profile.pricing_known:
@@ -146,8 +158,8 @@ class Orchestrator:
         else:
             actual, _ = profile.estimate_cost(completion.input_tokens, completion.output_tokens,
                                               self.settings.unknown_pricing_per_1k)
-        self.budget.settle(reservation, actual)
-        attempts = 1 + (int(getattr(self.provider, "retries_used", 0) or 0) - retries_before)
+        settlement = self.budget.settle(reservation, actual)
+        attempts = int((completion.raw or {}).get("attempts", 1) or 1)
         self.trace.record("step_end", step_id=step_id, agent=agent_name, model=model,
                           phase=phase, call_id=call_id,
                           input_tokens=completion.input_tokens,
@@ -157,8 +169,53 @@ class Orchestrator:
                           budget_remaining_usd=self.budget.remaining_usd,
                           duration_ms=duration_ms, attempts=attempts,
                           finish_reason=completion.finish_reason,
+                          usage_reported=bool((completion.raw or {}).get("usage_reported")),
                           estimated=bool((completion.raw or {}).get("provider") == "fake"))
+        self._note_settlement(settlement, step_id, agent_name, model, phase, call_id)
         return completion
+
+    def _close_uncertain(self, reservation: str, quote, step_id: str, agent: str, model: str,
+                         phase: str, call_id: str, error: str, detail: str) -> None:
+        settlement = self.budget.settle_uncertain(reservation, "{}: {}".format(error, detail))
+        self.trace.record("provider_call_failed", step_id=step_id, agent=agent, model=model,
+                          phase=phase, call_id=call_id, quote_usd=quote.usd,
+                          conservative=quote.conservative, billing="unknown",
+                          error=error, detail=detail[:200])
+        self.trace.record("provider_call_uncertain", step_id=step_id, agent=agent, model=model,
+                          phase=phase, call_id=call_id, uncertain_usd=settlement.quoted_usd,
+                          reason="{}: {}".format(error, detail)[:200])
+        self._note_settlement(settlement, step_id, agent, model, phase, call_id)
+
+    def _note_settlement(self, settlement: Settlement, step_id: str, agent: str, model: str,
+                         phase: str, call_id: str) -> None:
+        if settlement.overrun_usd:
+            self.trace.record("budget_overrun", step_id=step_id, agent=agent, model=model,
+                              phase=phase, call_id=call_id, quoted_usd=settlement.quoted_usd,
+                              actual_usd=settlement.actual_usd,
+                              overrun_usd=settlement.overrun_usd,
+                              budget=self.budget.snapshot())
+        if settlement.exhausted and not self._exhausted_recorded:
+            self._exhausted_recorded = True
+            self.trace.record("budget_exhausted", step_id=step_id, phase=phase,
+                              reason=self.budget.exhausted_reason,
+                              budget=self.budget.snapshot())
+
+    def _claim_leaks(self) -> None:
+        for settlement in self.budget.claim_leaks():
+            self.trace.record("reservation_leak", reservation_id=settlement.reservation_id,
+                              uncertain_usd=settlement.quoted_usd, reason=settlement.reason)
+
+    def _finalise(self, status: str, **fields) -> None:
+        """One terminal event per run, whatever happened, with no open reservations."""
+        self._claim_leaks()
+        self.trace.record("run_end", status=status, cost_usd=self.budget.spent_usd,
+                          uncertain_usd=self.budget.uncertain_usd,
+                          estimated_usd=self.budget.estimated_usd,
+                          overrun_usd=self.budget.overrun_usd,
+                          steps=fields.pop("steps", 0),
+                          artifacts=len(self.trace.artifacts()),
+                          budget=self.budget.snapshot(),
+                          elapsed_s=round(self._elapsed(), 3), **fields)
 
     def _ask_json(self, agent_name: str, model: str, system: str, prompt: str, parser,
                   step_id: str, phase: str):
@@ -195,9 +252,7 @@ class Orchestrator:
         decision = self._triage(task, self.board)
         self.trace.record("triage", route=decision.route, agent=decision.agent,
                           source=decision.source, reason=decision.reason)
-        self.trace.record("run_end", status="triage_only", cost_usd=self.budget.spent_usd,
-                          estimated_usd=self.budget.estimated_usd, steps=0,
-                          budget=self.budget.snapshot(), elapsed_s=round(self._elapsed(), 3))
+        self._finalise("triage_only")
         return decision
 
     def run(self, task: str, inputs: Optional[Dict[str, Any]] = None) -> RunResult:
@@ -232,10 +287,7 @@ class Orchestrator:
                               value_type=type(deliverable).__name__,
                               sha256=self._artifact_sha(board, deliver_key),
                               status="delivered")
-            self.trace.record("run_end", status="delivered", cost_usd=self.budget.spent_usd,
-                              estimated_usd=self.budget.estimated_usd,
-                              steps=steps_run, artifacts=len(self.trace.artifacts()),
-                              budget=self.budget.snapshot(), elapsed_s=round(self._elapsed(), 3))
+            self._finalise("delivered", steps=steps_run)
             return RunResult(task=task.strip(), deliverable=deliverable, route=route,
                              triage_source=triage_source, trace=self.trace,
                              board=board.snapshot(), cost_usd=self.budget.spent_usd,
@@ -246,13 +298,16 @@ class Orchestrator:
             status = ("budget_exceeded" if isinstance(exc, BudgetExceeded) else
                       "refused" if isinstance(exc, (PermissionDenied, OverwriteRejected,
                                                     DependencyError)) else "failed")
-            self.trace.record("run_end", status=status, error=type(exc).__name__,
-                              error_detail=str(exc)[:400], cost_usd=self.budget.spent_usd,
-                              estimated_usd=self.budget.estimated_usd,
-                              steps=steps_run, artifacts=len(self.trace.artifacts()),
-                              budget=self.budget.snapshot(), elapsed_s=round(self._elapsed(), 3))
+            self._finalise(status, steps=steps_run, error=type(exc).__name__,
+                           error_detail=str(exc)[:400])
             if isinstance(exc, BudgetExceeded) and exc.trace is None:
                 exc.trace = self.trace
+            raise
+        except Exception as exc:
+            # Anything unanticipated still yields a terminal event: a run that
+            # leaves no run_end is a run nobody can audit.
+            self._finalise("failed", steps=steps_run, error=type(exc).__name__,
+                           error_detail=str(exc)[:400], unexpected=True)
             raise
 
     # -- internals -----------------------------------------------------------
