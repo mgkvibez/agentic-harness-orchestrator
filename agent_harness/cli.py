@@ -29,7 +29,11 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--models", default=_example("models.json"))
     run.add_argument("--agents", default=_example("agents.json"))
     run.add_argument("--script", help="fake provider script (JSON). Default is offline playback.")
-    run.add_argument("--live", action="store_true", help="call real models through litellm (needs keys)")
+    run.add_argument("--live", action="store_true", help="call real models (needs keys)")
+    run.add_argument("--base-url", default=os.environ.get("AHARNESS_BASE_URL", ""),
+                     help="OpenAI-compatible endpoint, e.g. https://integrate.api.nvidia.com/v1")
+    run.add_argument("--api-key-env", default="AHARNESS_API_KEY",
+                     help="name of the environment variable holding the key")
     run.add_argument("--trace", default="", help="write the JSONL trace here")
     run.add_argument("--save-board", default="", help="write the final blackboard here")
     run.add_argument("--max-steps", type=int)
@@ -75,6 +79,15 @@ def _load(args):
 def _provider(args, offline_banner: bool = True):
     from .providers.fake import FakeProvider
     if getattr(args, "live", False):
+        base_url = getattr(args, "base_url", "") or ""
+        if base_url:
+            from .providers.openai_compat import OpenAICompatibleProvider
+            key_env = getattr(args, "api_key_env", "AHARNESS_API_KEY")
+            api_key = os.environ.get(key_env, "")
+            if not api_key:
+                raise MissingDependency("set {!r} in the environment; it is empty".format(key_env))
+            print("provider: openai-compat {} (real model calls)".format(base_url), file=sys.stderr)
+            return OpenAICompatibleProvider(base_url, api_key)
         from .providers.litellm_provider import LiteLLMProvider
         provider = LiteLLMProvider()
         print("provider: litellm (real model calls, costs money)", file=sys.stderr)

@@ -1,6 +1,6 @@
 import pytest
 from agent_harness.config import Settings
-from agent_harness.errors import BudgetExceeded, ConfigError, ProviderError
+from agent_harness.errors import BudgetExceeded, ConfigError, ContractViolation, ProviderError
 from agent_harness.orchestrator import Orchestrator
 from agent_harness.providers.base import Completion
 from agent_harness.providers.fake import FakeProvider
@@ -140,3 +140,43 @@ def test_trace_records_the_full_lifecycle_in_order():
     for expected in ("triage", "plan", "step_start", "step_end", "deliver"):
         assert expected in kinds
     assert result.trace.of_kind("step_end")[0].fields["estimated"] is True
+
+
+def test_truncated_answer_buys_more_room_instead_of_failing_the_contract():
+    script = [{"contains": "Decide the route", "text": "", "finish_reason": "length", "once": True},
+              {"contains": "Decide the route", "text": '{"route": "direct", "agent": "writer"}'},
+              {"contains": "Review", "text": "answer"}]
+    orchestrator = Orchestrator(REG, ROSTER, FakeProvider(script), Settings(max_output_tokens=32))
+    result = orchestrator.run("Review this codebase")
+    assert result.route == "direct" and result.triage_source == "model"
+    assert len(result.trace.of_kind("truncated")) == 1
+    assert len(result.trace.of_kind("contract_violation")) == 0, "truncation is not a contract failure"
+
+
+def test_triage_alone_routes_without_running_steps():
+    orchestrator = Orchestrator(REG, ROSTER, FakeProvider([DECOMPOSE]), Settings())
+    decision = orchestrator.triage("Review this codebase")
+    assert decision.route == "decompose"
+    assert len(orchestrator.trace.of_kind("step_end")) == 1, "only the triage call should have run"
+
+
+def test_a_truncated_step_buys_more_room():
+    script = [DECOMPOSE, {"contains": "Produce the plan", "text": (
+        '{"steps": [{"id": "s1", "agent": "writer", "instruction": "write it up", "writes": ["deliverable"]}]}')},
+        {"contains": "write it up", "text": "", "finish_reason": "length", "once": True},
+        {"contains": "write it up", "text": "the real answer"}]
+    orchestrator = Orchestrator(REG, ROSTER, FakeProvider(script), Settings(max_output_tokens=8))
+    result = orchestrator.run("write something")
+    assert result.deliverable == "the real answer"
+    assert orchestrator.trace.of_kind("truncated")
+
+
+def test_an_empty_step_write_fails_loudly_instead_of_shipping_a_blank_answer():
+    script = [DECOMPOSE, {"contains": "Produce the plan", "text": (
+        '{"steps": [{"id": "s1", "agent": "writer", "instruction": "write it up", "writes": ["deliverable"]}]}')},
+        {"contains": "write it up", "text": "   "}]
+    orchestrator = Orchestrator(REG, ROSTER, FakeProvider(script), Settings())
+    with pytest.raises(ContractViolation) as exc:
+        orchestrator.run("write something")
+    assert "no content" in str(exc.value)
+    assert orchestrator.trace.of_kind("empty_write")

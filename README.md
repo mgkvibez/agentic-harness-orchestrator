@@ -49,12 +49,57 @@ Three ceilings, all enforced per step, all reported with the partial trace when 
 
 Exit codes are a contract: `0` success, `2` usage or config error, `3` contract violation, `4` budget exceeded, `5` missing optional dependency.
 
+## Live run against real models (NVIDIA NIM)
+
+The scripted suite proves mechanics. This section is what happened when the harness was pointed at a real OpenAI-compatible endpoint with a real key, because that is the only way to find out whether models honour the contracts.
+
+**The endpoint's model list is not a capability list.** `/v1/models` advertised 85 ids. Of the 58 chat-capable ones, 43 returned `404 Function not found for account` (not provisioned on the key), several hit end-of-life (`410 Gone`, e.g. `meta/llama-3.1-8b-instruct`), and a handful return `200` with empty content when the token budget is smaller than their hidden reasoning. Ten actually answered. `scripts/live_probe.py` exists because of this: probe, do not trust the catalogue.
+
+**Contract compliance across those ten**, asking each to route a task as the harness's own triage step does:
+
+| model | contract | route it chose | latency |
+|---|---|---|---|
+| nemotron-3.5-bolt-e4b | clean | direct | 0.8s |
+| nemotron-3-nano-omni-30b-a3b-reasoning | clean | direct | 2.0s |
+| nemotron-3-ultra-550b-a55b | clean | decompose | 3.5s |
+| ising-calibration-1.5-31b | clean | decompose | 2.8s |
+| gpt-oss-20b | clean | direct | 6.9s |
+| minimax-m3.1-flash | clean | direct | 12.1s |
+| nemotron-3.5-lightning-30b-a3b | clean after buying room | direct | 16.9s |
+| muse-glimmer-30b | clean after buying room | decompose | 43.2s |
+| mistral-large-4-1t-a52b | clean after buying room | decompose | 62.3s |
+| laguna-xs-2.1 | provider error | - | 1.7s |
+
+Nine of ten complied. The three that needed help are the interesting part: they are reasoning models that spend the output budget thinking, so a 320-token ceiling truncated the answer and looked identical to a model ignoring the contract. The harness now distinguishes the two, buys more room once, and records `truncated` in the trace.
+
+**A full orchestrated run**, real models, real tokens, no script: triage and planning on the smallest ranked model, analysis on `gpt-oss-20b`, writing on `nemotron-3.5-bolt-e4b`.
+
+```
+STEP     AGENT        MODEL                       IN     OUT COST(USD)       MS
+-------------------------------------------------------------------------------
+triage   triage       nvidia/nemotron-3.5-bo     159      41   0.00000      952
+plan     planner      nvidia/nemotron-3.5-bo     199     174   0.00000     3157
+s1       analyst      openai/gpt-oss-20b         246     275   0.00000     8214
+s2       researcher   nvidia/nemotron-3.5-li     310    1500   0.00000    14221
+s2       researcher   nvidia/nemotron-3.5-li     310    2528   0.00000    25796
+s3       writer       nvidia/nemotron-3.5-bo     661     345   0.00000     5816
+-------------------------------------------------------------------------------
+totals: 1885 in / 4863 out tokens, $0.00000, 6 step(s)
+```
+
+58 seconds wall clock, six provider calls for five logical steps, one of them the truncation retry on `s2`. The deliverable correctly named the mounted docker socket, the `curl | bash`, and root SSH login, with evidence per finding. The dollars read zero because NIM is credit-metered and the profiles carry no per-token price: the token counts are measured, the cost column is not.
+
+Two honest observations from that run, both visible in the trace:
+
+- The planner ordered `analyst` before `researcher`, so the analyst ran with its declared input `findings` still absent. The harness records the missing key in the prompt and lets the step proceed. That is the wrong default for a plan that declares dependencies, and it is the next thing to fix.
+- Reasoning models can burn a 1500-token budget before producing a character, which is why the retry doubles to 4500 rather than nudging.
+
 ## What this is not
 
-- **Not benchmarked on routing quality.** The routing decision is a model call with a JSON contract. Whether it picks the best agent is unmeasured, and the README does not claim otherwise.
+- **Live-tested on ten NVIDIA NIM models, not benchmarked.** Contract compliance was measured there; whether the routing choice is the best one remains unmeasured, and the harness does not claim otherwise. Routing quality is The routing decision is a model call with a JSON contract. Whether it picks the best agent is unmeasured, and the README does not claim otherwise.
 - **Not a tool-calling framework.** Agents read and write blackboard keys. No filesystem, no shell, no browsing.
 - **Not a team simulator.** No agent-to-agent debate or critique loops. The blueprint kept that for Phase 2, deliberately.
-- **No committed model calls in the suite.** 77 tests run against a scripted provider in under a second, so the suite proves the mechanics, not model quality. `--live` is the real path and needs the `[litellm]` extra and your own keys.
+- **No committed model calls in the suite.** 92 tests run against a scripted provider in under a second, so the suite proves the mechanics, not model quality. `--live` is the real path and needs the `[litellm]` extra and your own keys.
 - **Price table is a snapshot**, hand-entered from public pages. It will drift; edit `examples/models.json`.
 
 ## Layout

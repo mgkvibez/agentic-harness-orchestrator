@@ -20,6 +20,8 @@ class ScriptedReply:
     contains: str = ""
     text: str = "ok"
     model: Optional[str] = None
+    finish_reason: str = "stop"
+    once: bool = False
 
     def matches(self, prompt: str) -> bool:
         return not self.contains or self.contains.lower() in prompt.lower()
@@ -39,7 +41,9 @@ class FakeProvider:
             else:
                 self.script.append(ScriptedReply(contains=item.get("contains", ""),
                                                  text=item.get("text", "ok"),
-                                                 model=item.get("model")))
+                                                 model=item.get("model"),
+                                                 finish_reason=item.get("finish_reason", "stop"),
+                                                 once=bool(item.get("once"))))
         self.fallback = fallback
         self.calls: List[Dict[str, object]] = []
 
@@ -49,15 +53,19 @@ class FakeProvider:
         if not prompt:
             raise ProviderError("fake provider got no user message")
         self.calls.append({"model": model, "prompt": prompt[:200]})
+        finish = "stop"
         for reply in self.script:
             if reply.matches(prompt):
-                text = reply.text
+                text, finish = reply.text, reply.finish_reason
+                if reply.once:
+                    self.script.remove(reply)
                 break
         else:
             text = self.fallback
         input_tokens = sum(estimate_tokens(m.content) for m in messages)
         return Completion(text=text, model=model, input_tokens=input_tokens,
-                          output_tokens=estimate_tokens(text), raw={"provider": "fake"})
+                          output_tokens=estimate_tokens(text), finish_reason=finish,
+                          raw={"provider": "fake"})
 
     @classmethod
     def from_json_file(cls, path: str) -> "FakeProvider":

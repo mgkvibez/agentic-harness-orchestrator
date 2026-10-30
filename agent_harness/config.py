@@ -26,6 +26,7 @@ class Settings:
     max_cost_usd: float = 0.25
     max_seconds: float = 120.0
     blackboard_char_limit: int = 40000
+    max_output_tokens: int = 1024
     trace_path: str = ""
     provider: str = "fake"
 
@@ -36,6 +37,7 @@ class Settings:
             max_cost_usd=_float("AHARNESS_MAX_COST_USD", 0.25),
             max_seconds=_float("AHARNESS_MAX_SECONDS", 120.0),
             blackboard_char_limit=_int("AHARNESS_BLACKBOARD_CHARS", 40000),
+            max_output_tokens=_int("AHARNESS_MAX_OUTPUT_TOKENS", 1024),
             trace_path=os.environ.get("AHARNESS_TRACE", ""),
             provider=os.environ.get("AHARNESS_PROVIDER", "fake"),
         )

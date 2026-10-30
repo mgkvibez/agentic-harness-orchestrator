@@ -27,6 +27,7 @@ class ModelProfile:
     cost_per_1k_in: float = 0.0
     cost_per_1k_out: float = 0.0
     context: int = 0
+    rank: int = 0
     notes: str = ""
 
     def __post_init__(self) -> None:
@@ -66,6 +67,7 @@ def load_profiles(path: str) -> List[ModelProfile]:
             speed=entry.get("speed", "balanced"),
             cost_per_1k_in=float(entry.get("cost_per_1k_in", 0.0)),
             cost_per_1k_out=float(entry.get("cost_per_1k_out", 0.0)),
+            rank=int(entry.get("rank", 0)),
             context=int(entry.get("context", 0)), notes=entry.get("notes", "")))
     if not profiles:
         raise ConfigError("{}: registry is empty".format(path))
@@ -110,5 +112,8 @@ class ModelRegistry:
         if not candidates:
             raise ConfigError("no model advertises the {!r} strength".format(strength))
         order = {"fast": 0, "balanced": 1, "slow": 2}
+        # Cost first, then an explicit human rank, then speed, then id. The rank
+        # matters when several models are unpriced: without it the tie-break is
+        # alphabetical order, which is not a routing policy.
         return sorted(candidates, key=lambda p: (p.cost_per_1k_in + p.cost_per_1k_out,
-                                                 order.get(p.speed, 9), p.id))[0]
+                                                 p.rank, order.get(p.speed, 9), p.id))[0]

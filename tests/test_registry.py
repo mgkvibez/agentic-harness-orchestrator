@@ -76,3 +76,15 @@ def test_load_profiles_rejects_entry_without_id(tmp_path):
     path.write_text(json.dumps([{"strengths": ["reasoning"]}]))
     with pytest.raises(ConfigError):
         load_profiles(str(path))
+
+
+def test_rank_breaks_ties_between_unpriced_models():
+    free_big = ModelProfile("aaa/big", "local", strengths=("cheap",), rank=9)
+    free_small = ModelProfile("zzz/small", "local", strengths=("cheap",), rank=1)
+    assert ModelRegistry([free_big, free_small]).cheapest_with("cheap").id == "zzz/small"
+
+
+def test_cost_still_beats_rank():
+    priced = ModelProfile("p/priced", "vendor", strengths=("cheap",), cost_per_1k_in=0.0001, rank=99)
+    free = ModelProfile("f/free", "local", strengths=("cheap",), rank=1)
+    assert ModelRegistry([priced, free]).cheapest_with("cheap").id == "f/free"
